@@ -15,7 +15,7 @@ import aiohttp
 
 from core.config import config
 from core.states import PhotoProcessingStates
-from keyboards.keyboards import main_menu_keyboard, create_photo_processing_keyboard
+from keyboards.keyboards import main_menu_keyboard, create_photo_processing_keyboard, create_photo_upload_keyboard
 from utils.formatters import (
     safe_send_message,
     handle_telegram_errors,
@@ -41,14 +41,14 @@ async def callback_start_photo_processing(callback: CallbackQuery, state: FSMCon
     
     logger.info(f"📸 User {telegram_id} started photo processing")
     
-    await state.update_data(photo_file_id=None, prompt=None)
+    await state.update_data(photo_file_ids=[], prompt=None)
     
     await state.set_state(PhotoProcessingStates.waiting_for_photo)
     
     welcome_text = (
         "🖼️ <b>Мастерская изображений</b>\n\n"
-        "Готов преобразить ваше фото! Просто отправьте его мне.\n\n"
-        "<b>Этап 1:</b> Жду ваше изображение."
+        "Готов преобразить ваши фото! Отправьте мне от 1 до 3 изображений.\n\n"
+        "<b>Этап 1:</b> Жду ваше первое изображение."
     )
     
     await callback.message.edit_text(
@@ -66,25 +66,47 @@ async def callback_start_photo_processing(callback: CallbackQuery, state: FSMCon
 @router.message(StateFilter(PhotoProcessingStates.waiting_for_photo), F.photo)
 @handle_telegram_errors
 async def process_photo(message: Message, state: FSMContext):
-    """Обработка фото от пользователя."""
+    """Обработка до 3 фото от пользователя."""
     telegram_id = message.from_user.id
     photo = message.photo[-1]
     
-    logger.info(f"📸 Photo received from user {telegram_id}, file_id: {photo.file_id}")
+    data = await state.get_data()
+    photo_file_ids = data.get("photo_file_ids", [])
     
-    await state.update_data(photo_file_id=photo.file_id)
+    if len(photo_file_ids) >= 3:
+        await safe_send_message(
+            message,
+            "Вы уже добавили 3 фото. Нажмите 'Готово', чтобы продолжить.",
+            user_id=telegram_id,
+            reply_markup=create_photo_upload_keyboard()
+        )
+        return
+
+    photo_file_ids.append(photo.file_id)
+    await state.update_data(photo_file_ids=photo_file_ids)
     
-    await state.set_state(PhotoProcessingStates.waiting_for_prompt)
-    
-    await safe_send_message(
-        message,
-        "✨ <b>Отличное фото!</b>\n\n"
-        "<b>Этап 2:</b> Теперь расскажите, что бы вы хотели с ним сделать?\n\n"
-        "<i>Например: «убери фон», «сделай в стиле аниме», «добавь солнечных лучей».</i>",
-        user_id=telegram_id,
-        parse_mode="HTML",
-        reply_markup=create_photo_processing_keyboard()
-    )
+    logger.info(f"📸 Photo {len(photo_file_ids)}/3 received from user {telegram_id}, file_id: {photo.file_id}")
+
+    if len(photo_file_ids) == 3:
+        await state.set_state(PhotoProcessingStates.waiting_for_prompt)
+        await safe_send_message(
+            message,
+            "✨ <b>3 фото добавлены!</b>\n\n"
+            "<b>Этап 2:</b> Теперь расскажите, что бы вы хотели с ними сделать?\n\n"
+            "<i>Например: «объедини три фото в одно», «сделай коллаж».</i>",
+            user_id=telegram_id,
+            parse_mode="HTML",
+            reply_markup=create_photo_processing_keyboard()
+        )
+    else:
+        await safe_send_message(
+            message,
+            f"✅ <b>Фото {len(photo_file_ids)}/3 добавлено.</b>\n\n"
+            "Вы можете отправить еще фото или нажать 'Готово', чтобы перейти к следующему шагу.",
+            user_id=telegram_id,
+            parse_mode="HTML",
+            reply_markup=create_photo_upload_keyboard()
+        )
 
 
 @router.message(StateFilter(PhotoProcessingStates.waiting_for_photo))
@@ -92,14 +114,60 @@ async def process_photo(message: Message, state: FSMContext):
 async def process_photo_error(message: Message, state: FSMContext):
     """Обработка некорректного ввода (не фото)."""
     telegram_id = message.from_user.id
-    
-    await safe_send_message(
-        message,
-        "Это не похоже на фото. Пожалуйста, отправьте изображение.",
-        user_id=telegram_id,
-        parse_mode="HTML"
-    )
+    data = await state.get_data()
+    photo_file_ids = data.get("photo_file_ids", [])
 
+    if not photo_file_ids:
+        await safe_send_message(
+            message,
+            "Это не похоже на фото. Пожалуйста, отправьте изображение.",
+            user_id=telegram_id
+        )
+    else:
+        await safe_send_message(
+            message,
+            "Пожалуйста, отправьте еще одно изображение или нажмите 'Готово'.",
+            user_id=telegram_id,
+            reply_markup=create_photo_upload_keyboard()
+        )
+
+
+# ============================================================================
+# Callback photos_done - завершение добавления фото
+# ============================================================================
+
+@router.callback_query(F.data == "photos_done", StateFilter(PhotoProcessingStates.waiting_for_photo))
+@handle_telegram_errors
+async def callback_photos_done(callback: CallbackQuery, state: FSMContext):
+    """Завершить добавление фото и перейти к вводу промпта."""
+    telegram_id = callback.from_user.id
+    data = await state.get_data()
+    
+    if not data.get("photo_file_ids"):
+        await callback.answer("Вы не добавили ни одного фото!", show_alert=True)
+        return
+
+    logger.info(f"👍 User {telegram_id} finished adding photos.")
+    
+    await state.set_state(PhotoProcessingStates.waiting_for_prompt)
+    
+    await callback.message.edit_text(
+        "✨ <b>Отличные фото!</b>\n\n"
+        "<b>Этап 2:</b> Теперь расскажите, что бы вы хотели с ними сделать?\n\n"
+        "<i>Например: «убери фон», «сделай в стиле аниме», «добавь солнечных лучей».</i>",
+        parse_mode="HTML",
+        reply_markup=create_photo_processing_keyboard()
+    )
+    await callback.answer()
+
+
+
+from sqlalchemy.ext.asyncio import AsyncSession
+from database.models import User
+from database.crud import use_credits
+
+# Стоимость операций
+PHOTO_GENERATION_COST = 40
 
 # ============================================================================
 # Обработка промпта
@@ -107,7 +175,7 @@ async def process_photo_error(message: Message, state: FSMContext):
 
 @router.message(StateFilter(PhotoProcessingStates.waiting_for_prompt), F.text)
 @handle_telegram_errors
-async def process_prompt(message: Message, state: FSMContext):
+async def process_prompt(message: Message, state: FSMContext, session: AsyncSession, db_user: User):
     """Обработка текстового описания (промпта)."""
     telegram_id = message.from_user.id
     prompt_text = message.text.strip()
@@ -134,7 +202,7 @@ async def process_prompt(message: Message, state: FSMContext):
     
     await state.update_data(prompt=prompt_text)
     
-    await process_photo_with_api(message, state)
+    await process_photo_with_api(message, state, session, db_user)
 
 
 @router.message(StateFilter(PhotoProcessingStates.waiting_for_prompt))
@@ -154,16 +222,28 @@ async def process_prompt_error(message: Message, state: FSMContext):
 # Обработка фото через API
 # ============================================================================
 
-async def process_photo_with_api(message: Message, state: FSMContext):
+async def process_photo_with_api(message: Message, state: FSMContext, session: AsyncSession, db_user: User):
     """Отправка данных в GPT сервис для обработки фото."""
     telegram_id = message.from_user.id
     
+    # 1. Проверка кредитов
+    if db_user.credits_remaining < PHOTO_GENERATION_COST:
+        logger.info(f"🚫 User {telegram_id} has not enough credits for photo generation.")
+        await safe_send_message(
+            message,
+            f"У вас недостаточно кредитов для генерации фото (нужно {PHOTO_GENERATION_COST}, у вас {db_user.credits_remaining}).\n"
+            "Чтобы пополнить баланс, воспользуйтесь командой /buy_credits.",
+            user_id=telegram_id
+        )
+        await state.clear()
+        return
+
     data = await state.get_data()
     
-    photo_file_id = data.get("photo_file_id")
+    photo_file_ids = data.get("photo_file_ids")
     prompt = data.get("prompt")
     
-    if not photo_file_id or not prompt:
+    if not photo_file_ids or not prompt:
         await safe_send_message(
             message,
             "Что-то пошло не так, не хватает данных. Давайте начнем сначала.",
@@ -172,9 +252,10 @@ async def process_photo_with_api(message: Message, state: FSMContext):
         await state.clear()
         return
     
-    await safe_send_message(
+    processing_message = await safe_send_message(
         message,
-        "🔮 <b>Колдую над вашим изображением...</b>\n\n"
+        f"🔮 <b>Колдую над вашим изображением...</b>\n\n"
+        f"Это будет стоить {PHOTO_GENERATION_COST} кредитов. Ваш баланс: {db_user.credits_remaining - PHOTO_GENERATION_COST}\n"
         "Обычно это занимает не больше минуты.",
         user_id=telegram_id,
         parse_mode="HTML"
@@ -183,7 +264,7 @@ async def process_photo_with_api(message: Message, state: FSMContext):
     endpoint = f"{GPT_SERVICE_URL.rstrip('/')}/v1/photo/process"
     payload = {
         "telegram_id": telegram_id,
-        "photo_file_id": photo_file_id,
+        "photo_file_ids": photo_file_ids,
         "prompt": prompt
     }
     headers = {
@@ -192,9 +273,13 @@ async def process_photo_with_api(message: Message, state: FSMContext):
     }
     
     try:
+        # Списываем кредит ПЕРЕД запросом
+        await use_credits(session, telegram_id, PHOTO_GENERATION_COST)
+        logger.info(f"💳 {PHOTO_GENERATION_COST} credits used by user {telegram_id}. Remaining: {db_user.credits_remaining}")
+
         timeout = aiohttp.ClientTimeout(total=300)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(endpoint, json=payload, headers=headers) as resp:
+        async with aiohttp.ClientSession(timeout=timeout) as aio_session:
+            async with aio_session.post(endpoint, json=payload, headers=headers) as resp:
                 
                 if resp.status == 200:
                     result = await resp.json()
@@ -272,6 +357,10 @@ async def process_photo_with_api(message: Message, state: FSMContext):
             user_id=telegram_id
         )
         await state.clear()
+    finally:
+        # Удаляем сообщение о процессе
+        if processing_message:
+            await processing_message.delete()
 
 
 # ============================================================================

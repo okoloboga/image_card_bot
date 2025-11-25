@@ -1,0 +1,128 @@
+# bot/handlers/payment.py
+"""
+Payment Handler - обработка платежей через Telegram Stars.
+"""
+
+import logging
+from aiogram import Router, F
+from aiogram.types import Message, CallbackQuery, LabeledPrice, PreCheckoutQuery
+from aiogram.filters import Command
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from database.models import User
+from database.crud import add_credits
+
+logger = logging.getLogger(__name__)
+
+router = Router()
+
+# ============================================================================
+# /buy_credits - Покупка кредитов
+# ============================================================================
+
+@router.message(Command("buy_credits"))
+async def buy_credits_command(message: Message, db_user: User):
+    """
+    Показывает меню для покупки кредитов.
+    """
+    builder = InlineKeyboardBuilder()
+    # payload: buy:credits:{amount}:{price_in_stars}
+    builder.button(text="70 Кредитов за 50 ⭐️", callback_data="buy:credits:70:50")
+    builder.button(text="160 Кредитов за 100 ⭐️", callback_data="buy:credits:160:100")
+    builder.button(text="500 Кредитов за 250 ⭐️", callback_data="buy:credits:500:250")
+    builder.button(text="2700 Кредитов за 1000 ⭐️", callback_data="buy:credits:2700:1000")
+    builder.button(text="8000 Кредитов за 2500 ⭐️", callback_data="buy:credits:8000:2500")
+    builder.adjust(1) # по одной кнопке в ряду
+
+    text = (
+        "<b>💎 Покупка кредитов</b>\n\n"
+        "Выберите пакет, который хотите приобрести. Кредиты используются для всех типов генераций.\n\n"
+        "• Генерация текста: 1 кредит\n"
+        "• Генерация фото: 40 кредитов\n\n"
+        f"Ваш текущий баланс: <b>{db_user.credits_remaining}</b> кредитов."
+    )
+
+    await message.answer(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+
+# ============================================================================
+# Отправка инвойса
+# ============================================================================
+
+@router.callback_query(F.data.startswith("buy:"))
+async def send_invoice_handler(callback: CallbackQuery):
+    """
+    Создает и отправляет инвойс на основе callback данных.
+    """
+    try:
+        _, type, amount_str, price_str = callback.data.split(":")
+        amount = int(amount_str)
+        price = int(price_str)
+    except (ValueError, IndexError):
+        logger.error(f"Invalid callback data for payment: {callback.data}")
+        await callback.answer("Произошла ошибка. Попробуйте снова.", show_alert=True)
+        return
+
+    if type != "credits":
+        logger.error(f"Unknown purchase type in callback: {callback.data}")
+        await callback.answer("Неизвестный тип покупки.", show_alert=True)
+        return
+
+    title = f"Покупка {amount} кредитов"
+    description = f"Пополнение баланса на {amount} кредитов для генерации контента."
+    payload = f"buy:credits:{amount}"
+    prices = [LabeledPrice(label="кредитов", amount=price)]
+
+    await callback.bot.send_invoice(
+        chat_id=callback.from_user.id,
+        title=title,
+        description=description,
+        provider_token="",  # Для Telegram Stars оставляем пустым
+        currency="XTR",
+        prices=prices,
+        payload=payload
+    )
+    await callback.answer()
+
+
+# ============================================================================
+# Пре-чекаут и успешный платеж
+# ============================================================================
+
+@router.pre_checkout_query()
+async def pre_checkout_handler(pre_checkout_query: PreCheckoutQuery):
+    """
+    Подтверждение готовности принять платеж.
+    """
+    await pre_checkout_query.answer(ok=True)
+
+
+@router.message(F.successful_payment)
+async def success_payment_handler(message: Message, session: AsyncSession):
+    """
+    Обработка успешного платежа.
+    """
+    telegram_id = message.from_user.id
+    payment_info = message.successful_payment
+    payload = payment_info.invoice_payload
+
+    logger.info(f"✅ Successful payment from {telegram_id}. Payload: {payload}, Charge ID: {payment_info.telegram_payment_charge_id}")
+
+    try:
+        _, type, amount_str = payload.split(":")
+        amount = int(amount_str)
+    except (ValueError, IndexError):
+        logger.error(f"Invalid payload in successful payment: {payload}")
+        await message.answer("Произошла ошибка при зачислении кредитов. Пожалуйста, обратитесь в поддержку.")
+        return
+
+    if type == "credits":
+        await add_credits(session, telegram_id, amount)
+        success_text = f"🎉 Успешно! Вам начислено {amount} кредитов."
+    else:
+        logger.error(f"Unknown purchase type in successful payment payload: {payload}")
+        await message.answer("Произошла ошибка при определении типа покупки. Пожалуйста, обратитесь в поддержку.")
+        return
+    
+    await message.answer(success_text)
+

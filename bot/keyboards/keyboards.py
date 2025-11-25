@@ -23,3 +23,11 @@ def create_photo_processing_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Отмена", callback_data="cancel_photo_processing")]
     ])
+
+
+def create_photo_upload_keyboard() -> InlineKeyboardMarkup:
+    """The keyboard for when user is uploading photos."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Готово", callback_data="photos_done")],
+        [InlineKeyboardButton(text="🔙 Отмена", callback_data="cancel_photo_processing")]
+    ])

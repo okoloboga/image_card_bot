@@ -237,13 +237,20 @@ async def process_target_audience_error(message: Message, state: FSMContext):
     )
 
 
+from sqlalchemy.ext.asyncio import AsyncSession
+from database.models import User
+from database.crud import use_credits
+
+# Стоимость операций
+CARD_GENERATION_COST = 1
+
 # ============================================================================
 # Обработка selling points
 # ============================================================================
 
 @router.message(StateFilter(CardGenerationStates.waiting_for_selling_points), F.text)
 @handle_telegram_errors
-async def process_selling_points(message: Message, state: FSMContext):
+async def process_selling_points(message: Message, state: FSMContext, session: AsyncSession, db_user: User):
     """Обработка selling points и запуск генерации."""
     telegram_id = message.from_user.id
     selling_points_text = message.text
@@ -252,7 +259,7 @@ async def process_selling_points(message: Message, state: FSMContext):
     
     await state.update_data(selling_points=selling_points_text)
     
-    await generate_card_with_gpt(message, state)
+    await generate_card_with_gpt(message, state, session, db_user)
 
 
 @router.message(StateFilter(CardGenerationStates.waiting_for_selling_points))
@@ -272,10 +279,22 @@ async def process_selling_points_error(message: Message, state: FSMContext):
 # Генерация карточки через GPT
 # ============================================================================
 
-async def generate_card_with_gpt(message: Message, state: FSMContext):
+async def generate_card_with_gpt(message: Message, state: FSMContext, session: AsyncSession, db_user: User):
     """Отправка данных в GPT сервис для генерации карточки."""
     telegram_id = message.from_user.id
-    
+
+    # 1. Проверка кредитов
+    if db_user.credits_remaining < CARD_GENERATION_COST:
+        logger.info(f"🚫 User {telegram_id} has not enough credits for card generation.")
+        await safe_send_message(
+            message,
+            f"У вас недостаточно кредитов для генерации описания (нужно {CARD_GENERATION_COST}, у вас {db_user.credits_remaining}).\n"
+            "Чтобы пополнить баланс, воспользуйтесь командой /buy_credits.",
+            user_id=telegram_id
+        )
+        await state.clear()
+        return
+
     data = await state.get_data()
     
     photo_file_id = data.get("photo_file_id")
@@ -292,9 +311,10 @@ async def generate_card_with_gpt(message: Message, state: FSMContext):
         await state.clear()
         return
     
-    await safe_send_message(
+    processing_message = await safe_send_message(
         message,
-        "🤖 <b>Начинаю генерацию текста...</b>\n\n"
+        f"🤖 <b>Начинаю генерацию текста...</b>\n\n"
+        f"Это будет стоить {CARD_GENERATION_COST} кредит. Ваш баланс: {db_user.credits_remaining - CARD_GENERATION_COST}\n"
         "Это может занять до двух минут. Пожалуйста, подождите.",
         user_id=telegram_id,
         parse_mode="HTML"
@@ -315,9 +335,13 @@ async def generate_card_with_gpt(message: Message, state: FSMContext):
     }
     
     try:
+        # Списываем кредит ПЕРЕД запросом
+        await use_credits(session, telegram_id, CARD_GENERATION_COST)
+        logger.info(f"💳 {CARD_GENERATION_COST} credit(s) used by user {telegram_id}. Remaining: {db_user.credits_remaining}")
+
         timeout = aiohttp.ClientTimeout(total=120)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(endpoint, json=payload, headers=headers) as resp:
+        async with aiohttp.ClientSession(timeout=timeout) as aio_session:
+            async with aio_session.post(endpoint, json=payload, headers=headers) as resp:
                 
                 if resp.status == 200:
                     result = await resp.json()
@@ -384,6 +408,9 @@ async def generate_card_with_gpt(message: Message, state: FSMContext):
             user_id=telegram_id
         )
         await state.clear()
+    finally:
+        if processing_message:
+            await processing_message.delete()
 
 
 # ============================================================================
