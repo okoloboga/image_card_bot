@@ -1,7 +1,7 @@
 # bot/database/models.py
 
 import datetime
-from sqlalchemy import BigInteger, String, DateTime, func
+from sqlalchemy import BigInteger, String, DateTime, func, ForeignKey
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -32,6 +32,11 @@ class User(Base):
     # Unified credit system
     credits_remaining: Mapped[int] = mapped_column(default=125, server_default="125")
     credits_used: Mapped[int] = mapped_column(default=0, server_default="0")
+
+    # Referral system
+    referral_link: Mapped[str] = mapped_column(String, unique=True, nullable=True)
+    referred_by_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.telegram_id"), nullable=True)
+    referral_earnings: Mapped[int] = mapped_column(default=0, server_default="0")
 
     def __repr__(self):
         return f"<User(id={self.id}, telegram_id={self.telegram_id}, username='{self.username}')>"

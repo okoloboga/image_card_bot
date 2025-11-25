@@ -9,9 +9,16 @@ GPT Integration Service - главный роутер для всех GPT фун
 import os
 import asyncio
 import logging
+import time
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 from dotenv import load_dotenv
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.types import ASGIApp
+from starlette.middleware import Middleware
 
 # Загружаем переменные окружения из корневого .env файла
 # В Docker переменные окружения уже установлены через docker-compose.yml
@@ -32,7 +39,46 @@ from gpt_integration.photo_processing.service import process_photo
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="GPT Integration Service", version="1.0.0")
+# Отключаем стандартный логгер uvicorn.access
+uvicorn_access_logger = logging.getLogger("uvicorn.access")
+uvicorn_access_logger.handlers = []
+uvicorn_access_logger.propagate = False
+
+class CustomAccessLogMiddleware(BaseHTTPMiddleware):
+    """
+    Кастомный middleware для логирования запросов, исключая /health.
+    """
+    def __init__(self, app: ASGIApp):
+        super().__init__(app)
+        self.access_logger = logging.getLogger("gpt_integration.access")
+        self.access_logger.setLevel(logging.INFO)
+        if not self.access_logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+            handler.setFormatter(formatter)
+            self.access_logger.addHandler(handler)
+
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.time()
+        
+        response = await call_next(request)
+        
+        process_time = time.time() - start_time
+        formatted_process_time = f"{process_time:.4f}s"
+
+        if request.url.path != "/health":
+            self.access_logger.info(
+                f'{request.client.host}:{request.client.port} - "{request.method} {request.url.path} HTTP/{request.scope["http_version"]}" '
+                f'{response.status_code} {formatted_process_time}'
+            )
+        
+        return response
+
+app = FastAPI(
+    title="GPT Integration Service", 
+    version="1.0.0",
+    middleware=[Middleware(CustomAccessLogMiddleware)]
+)
 
 
 # ============================================================================

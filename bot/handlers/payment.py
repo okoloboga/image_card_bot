@@ -1,19 +1,22 @@
 import logging
 from typing import Union
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, LabeledPrice, PreCheckoutQuery
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import User
-from database.crud import add_credits
+from database.crud import add_credits, get_user, add_referral_earnings
+from utils.formatters import safe_send_message
 
 logger = logging.getLogger(__name__)
 
 router = Router()
 
 
+from keyboards.keyboards import back_to_main_menu_keyboard
+...
 async def show_buy_credits_menu(event: Union[Message, CallbackQuery], db_user: User):
     """
     Reusable function to show the credit purchase menu.
@@ -26,6 +29,7 @@ async def show_buy_credits_menu(event: Union[Message, CallbackQuery], db_user: U
     builder.button(text="500 Кредитов за 250 ⭐️", callback_data="buy:credits:500:250")
     builder.button(text="2700 Кредитов за 1000 ⭐️", callback_data="buy:credits:2700:1000")
     builder.button(text="8000 Кредитов за 2500 ⭐️", callback_data="buy:credits:8000:2500")
+    builder.button(text="⬅️ Назад в главное меню", callback_data="back_to_main_menu")
     builder.adjust(1)
 
     text = (
@@ -115,9 +119,9 @@ async def pre_checkout_handler(pre_checkout_query: PreCheckoutQuery):
 
 
 @router.message(F.successful_payment)
-async def success_payment_handler(message: Message, session: AsyncSession):
+async def success_payment_handler(message: Message, session: AsyncSession, db_user: User, bot: Bot):
     """
-    Обработка успешного платежа.
+    Обработка успешного платежа и начисление реферального бонуса.
     """
     telegram_id = message.from_user.id
     payment_info = message.successful_payment
@@ -134,12 +138,36 @@ async def success_payment_handler(message: Message, session: AsyncSession):
         return
 
     if type == "credits":
+        # Начисляем кредиты покупателю
         await add_credits(session, telegram_id, amount)
         success_text = f"🎉 Успешно! Вам начислено {amount} кредитов."
+        await message.answer(success_text)
+
+        # --- Логика начисления реферального бонуса ---
+        if db_user.referred_by_id:
+            referrer = await get_user(session, db_user.referred_by_id)
+            if referrer:
+                bonus_amount = int(amount * 0.20)
+                if bonus_amount > 0:
+                    # Начисляем бонус и обновляем статистику
+                    await add_credits(session, referrer.telegram_id, bonus_amount)
+                    await add_referral_earnings(session, referrer.telegram_id, bonus_amount)
+                    
+                    logger.info(f"🎁 Awarded {bonus_amount} referral bonus credits to user {referrer.telegram_id}")
+                    
+                    # Уведомляем реферера
+                    try:
+                        await bot.send_message(
+                            chat_id=referrer.telegram_id,
+                            text=f"🎉 Вам начислен реферальный бонус: <b>{bonus_amount}</b> кредитов!\n"
+                                 f"Ваш друг (ID: `{telegram_id}`) совершил покупку.",
+                            parse_mode="HTML"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to send referral bonus notification to {referrer.telegram_id}: {e}")
+
     else:
         logger.error(f"Unknown purchase type in successful payment payload: {payload}")
         await message.answer("Произошла ошибка при определении типа покупки. Пожалуйста, обратитесь в поддержку.")
         return
-    
-    await message.answer(success_text)
 

@@ -3,6 +3,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from aiogram import types
+from typing import Optional
 
 from .models import User
 
@@ -12,10 +13,16 @@ async def get_user(session: AsyncSession, telegram_id: int) -> User | None:
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
 
-async def get_or_create_user(session: AsyncSession, telegram_user: types.User) -> User:
+async def get_user_by_referral_link(session: AsyncSession, referral_link: str) -> User | None:
+    """Retrieve a user by their referral link."""
+    stmt = select(User).where(User.referral_link == referral_link)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+async def get_or_create_user(session: AsyncSession, telegram_user: types.User, referrer_id: Optional[int] = None) -> User:
     """
     Retrieves a user by their Telegram ID, creating them if they don't exist.
-    Updates username, first_name, and last_name if they have changed.
+    Handles referral logic for new users.
     """
     db_user = await get_user(session, telegram_user.id)
     
@@ -32,11 +39,25 @@ async def get_or_create_user(session: AsyncSession, telegram_user: types.User) -
         return db_user
 
     # Create new user
+    initial_credits = 125
+    
+    # Check if referrer exists and is not the user themselves
+    if referrer_id and referrer_id != telegram_user.id:
+        referrer = await get_user(session, referrer_id)
+        if referrer:
+            initial_credits = 225  # Bonus for the new user
+        else:
+            referrer_id = None # Referrer not found, treat as normal registration
+    else:
+        referrer_id = None # User can't be their own referrer
+
     new_user = User(
         telegram_id=telegram_user.id,
         username=telegram_user.username,
         first_name=telegram_user.first_name,
         last_name=telegram_user.last_name,
+        credits_remaining=initial_credits,
+        referred_by_id=referrer_id
     )
     session.add(new_user)
     await session.commit()
@@ -65,6 +86,23 @@ async def add_credits(session: AsyncSession, telegram_id: int, amount_to_add: in
     user = await get_user(session, telegram_id)
     if user and amount_to_add > 0:
         user.credits_remaining += amount_to_add
+        await session.commit()
+        return True
+    return False
+
+async def count_referrals(session: AsyncSession, user_id: int) -> int:
+    """Counts how many users were referred by a specific user."""
+    from sqlalchemy import func
+    
+    stmt = select(func.count(User.id)).where(User.referred_by_id == user_id)
+    result = await session.execute(stmt)
+    return result.scalar() or 0
+
+async def add_referral_earnings(session: AsyncSession, user_id: int, amount: int):
+    """Adds to a user's referral earnings statistic."""
+    user = await get_user(session, user_id)
+    if user and amount > 0:
+        user.referral_earnings += amount
         await session.commit()
         return True
     return False

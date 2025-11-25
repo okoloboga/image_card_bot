@@ -191,7 +191,8 @@ async def safe_send_message(
     text: str,
     reply_markup=None,
     user_id: int = None,
-    parse_mode: Optional[str] = None
+    parse_mode: Optional[str] = None,
+    disable_web_page_preview: Optional[bool] = None
 ) -> bool:
     """
     Безопасно отправить сообщение с обработкой ошибок
@@ -203,7 +204,8 @@ async def safe_send_message(
         await message.answer(
             text=text,
             reply_markup=reply_markup,
-            parse_mode=parse_mode
+            parse_mode=parse_mode,
+            disable_web_page_preview=disable_web_page_preview
         )
         return True
         

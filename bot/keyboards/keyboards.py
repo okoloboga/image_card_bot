@@ -32,3 +32,9 @@ def create_photo_upload_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="✅ Готово", callback_data="photos_done")],
         [InlineKeyboardButton(text="🔙 Отмена", callback_data="cancel_photo_processing")]
     ])
+
+def back_to_main_menu_keyboard() -> InlineKeyboardMarkup:
+    """A keyboard with a single button to go back to the main menu."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад в главное меню", callback_data="back_to_main_menu")]
+    ])
