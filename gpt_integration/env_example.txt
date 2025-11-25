@@ -1,0 +1,64 @@
+# gpt_integration env example
+
+# Порт сервиса
+GPT_PORT=9000
+
+# Ключ для авторизации (совпадает с сервером)
+API_SECRET_KEY=changeme
+
+# Адрес сервера Bot API (данные для анализа)
+SERVER_HOST=http://server:8000
+
+# Адрес бота (приём вебхуков)
+BOT_WEBHOOK_BASE=http://bot:8001
+
+# OpenAI / Совместимый провайдер
+OPENAI_API_KEY=your_openai_api_key
+# OPENAI_BASE_URL=https://api.openai.com/v1
+# Если OpenAI API недоступен в вашем регионе (ошибка 403 unsupported_country_region_territory),
+# используйте альтернативный endpoint:
+# - Прокси-сервер для OpenAI API (например, через Cloudflare Workers)
+# - OpenAI-совместимый провайдер: Azure OpenAI, Anyscale, Together AI, и др.
+# Пример: OPENAI_BASE_URL=https://api.anyscale.com/v1
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_TEMPERATURE=0.2
+OPENAI_MAX_TOKENS=4000
+OPENAI_TIMEOUT=60
+# OPENAI_SYSTEM_PROMPT=опционально, переопределение системного промпта
+
+# Stage 5: параметры ретраев LLM
+# Количество повторов при ошибках или пустом ответе
+OPENAI_MAX_RETRIES=2
+# Начальная задержка между повторами (мс)
+OPENAI_RETRY_DELAY_MS=500
+# Множитель экспоненциального бэк-оффа
+OPENAI_RETRY_BACKOFF=2
+
+# AI Chat module
+AI_CHAT_PORT=9001
+# Основная БД (SQLite по умолчанию; для продакшена используйте Postgres)
+DATABASE_URL=sqlite:///./ai_chat.db
+# Дополнительный DSN для asyncpg-пула (если отличается от DATABASE_URL)
+# AI_CHAT_DATABASE_URL=postgresql://wb_user:wb_password@db:5432/ai_chat
+# Уровень логирования AI-чата
+LOG_LEVEL=INFO
+
+# Photo Processing - API генерации изображений
+IMAGE_GEN_API_KEY=k-proj-cV54hqZ-Iz5dS5bYSeLG7OvZTNkcZeKMFKaBkCDafVCZbMteFdY5fLp3YdNDL1bsWJciipBjoeT3BlbkFJ5SaoGmExYtWDpKnr4pcIDUr2LPcJj9ETZnr1Rfq5w_E1qQBNzauz52tkbMx_UT5qsqnEkCjZ0A
+IMAGE_GEN_BASE_URL=https://api.openai.com/v1
+IMAGE_GEN_TIMEOUT=60
+IMAGE_GEN_MAX_RETRIES=3
+
+# Photo Processing - Хранение результатов (Вариант 1: ссылки)
+PHOTO_STORAGE_TYPE=url
+# PHOTO_STORAGE_PATH=/path/to/storage (опционально, для Варианта 2)
+# PHOTO_STORAGE_URL_PREFIX=https://cdn.example.com (опционально, для CDN)
+
+# Photo Processing - База данных (опционально, по умолчанию используется общая БД)
+# PHOTO_PROCESSING_DATABASE_URL=sqlite:///./photo_processing.db
+
+# Примечание: при локальном запуске убедитесь, что импорт bot/utils доступен,
+# например запуская из корня проекта или установив PYTHONPATH на корень.
+
+# Совместимость со standalone AI Chat (если нужно использовать старые переменные)
+# BOT_HOST=http://bot:8001  # аналог BOT_WEBHOOK_BASE
