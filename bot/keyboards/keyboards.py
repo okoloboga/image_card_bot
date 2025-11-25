@@ -8,6 +8,7 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎨 Генерация карточки", callback_data="start_card_generation")],
         [InlineKeyboardButton(text="📸 Обработка фото", callback_data="start_photo_processing")],
+        [InlineKeyboardButton(text="💰 Мой баланс / Купить кредиты", callback_data="show_main_menu")]
     ])
 
 

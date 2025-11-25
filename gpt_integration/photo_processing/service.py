@@ -9,7 +9,8 @@
 import os
 import logging
 import httpx
-from typing import Optional, Dict, Any
+import asyncio
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 
 from .image_client import ImageGenerationClient
@@ -39,17 +40,17 @@ async def _get_telegram_file_url(bot_token: str, file_id: str) -> str:
 
 async def process_photo(
     telegram_id: int,
-    photo_file_id: str,
+    photo_file_ids: List[str],
     prompt: str,
     user_id: Optional[int] = None,
     bot_token: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Обработать фотографию по промпту пользователя.
+    Обработать до 3 фотографий по промпту пользователя.
     
     Args:
         telegram_id: ID пользователя в Telegram
-        photo_file_id: Telegram file_id исходного фото
+        photo_file_ids: Список Telegram file_id исходных фото
         prompt: Текстовое описание желаемого результата
         user_id: ID пользователя в основной БД (опционально)
         bot_token: Токен Telegram бота (для загрузки фото)
@@ -65,7 +66,7 @@ async def process_photo(
     """
     start_time = datetime.now()
     
-    logger.info(f"📸 Processing photo for user {telegram_id} with prompt: {prompt[:50]}...")
+    logger.info(f"📸 Processing {len(photo_file_ids)} photos for user {telegram_id} with prompt: {prompt[:50]}...")
     
     client = None
     try:
@@ -75,9 +76,12 @@ async def process_photo(
             if not bot_token:
                 raise ValueError("BOT_TOKEN not set")
         
-        # 2. Получаем URL фото из Telegram
-        logger.info(f"📥 Getting file URL from Telegram for: {photo_file_id}")
-        image_url = await _get_telegram_file_url(bot_token, photo_file_id)
+        # 2. Получаем URLы фото из Telegram
+        logger.info(f"📥 Getting file URLs from Telegram for: {photo_file_ids}")
+        
+        image_urls = await asyncio.gather(
+            *[_get_telegram_file_url(bot_token, file_id) for file_id in photo_file_ids]
+        )
         
         # 3. Создаем клиент для API генерации изображений
         api_key = os.getenv("IMAGE_GEN_API_KEY") or os.getenv("COMET_API_KEY")
@@ -85,21 +89,21 @@ async def process_photo(
             raise ValueError("IMAGE_GEN_API_KEY or COMET_API_KEY not set")
             
         base_url = os.getenv("IMAGE_GEN_BASE_URL") or "https://api.cometapi.com"
-        model = os.getenv("IMAGE_GEN_MODEL") or "gemini-2.5-flash-image"
-        timeout_str = os.getenv("IMAGE_GEN_TIMEOUT", "120.0")
+        model = os.getenv("IMAGE_GEN_MODEL") or "gemini-3-pro-image" # Используем более мощную модель для нескольких фото
+        timeout_str = os.getenv("IMAGE_GEN_TIMEOUT", "180.0")
         timeout = float(timeout_str)
 
         client = ImageGenerationClient(api_key=api_key, base_url=base_url, model=model, timeout=timeout)
         
         # 4. Обрабатываем изображение
-        logger.info(f"🎨 Processing image with prompt: {prompt[:50]}...")
-        photo_data_uri = await client.process_image(image_url, prompt)
+        logger.info(f"🎨 Processing images with prompt: {prompt[:50]}...")
+        photo_data_uri = await client.process_images(image_urls, prompt)
         
         photo_url = photo_data_uri 
         
         processing_time = (datetime.now() - start_time).total_seconds()
 
-        logger.info(f"✅ Photo processed successfully in {processing_time:.2f}s")
+        logger.info(f"✅ Photos processed successfully in {processing_time:.2f}s")
         
         return {
             "photo_url": photo_url,

@@ -1,9 +1,5 @@
-# bot/handlers/payment.py
-"""
-Payment Handler - обработка платежей через Telegram Stars.
-"""
-
 import logging
+from typing import Union
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, LabeledPrice, PreCheckoutQuery
 from aiogram.filters import Command
@@ -17,14 +13,11 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
-# ============================================================================
-# /buy_credits - Покупка кредитов
-# ============================================================================
 
-@router.message(Command("buy_credits"))
-async def buy_credits_command(message: Message, db_user: User):
+async def show_buy_credits_menu(event: Union[Message, CallbackQuery], db_user: User):
     """
-    Показывает меню для покупки кредитов.
+    Reusable function to show the credit purchase menu.
+    Can be triggered by a message or a callback query.
     """
     builder = InlineKeyboardBuilder()
     # payload: buy:credits:{amount}:{price_in_stars}
@@ -33,7 +26,7 @@ async def buy_credits_command(message: Message, db_user: User):
     builder.button(text="500 Кредитов за 250 ⭐️", callback_data="buy:credits:500:250")
     builder.button(text="2700 Кредитов за 1000 ⭐️", callback_data="buy:credits:2700:1000")
     builder.button(text="8000 Кредитов за 2500 ⭐️", callback_data="buy:credits:8000:2500")
-    builder.adjust(1) # по одной кнопке в ряду
+    builder.adjust(1)
 
     text = (
         "<b>💎 Покупка кредитов</b>\n\n"
@@ -43,13 +36,37 @@ async def buy_credits_command(message: Message, db_user: User):
         f"Ваш текущий баланс: <b>{db_user.credits_remaining}</b> кредитов."
     )
 
-    await message.answer(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+    if isinstance(event, Message):
+        await event.answer(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+    elif isinstance(event, CallbackQuery):
+        # Check if the message content is different before editing
+        if event.message and event.message.text != text:
+            await event.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+        await event.answer() # Acknowledge the callback
+
+# ============================================================================
+# Handlers
+# ============================================================================
+
+@router.message(Command("buy_credits"))
+async def buy_credits_command(message: Message, db_user: User):
+    """
+    Shows the credit purchase menu via a command.
+    """
+    await show_buy_credits_menu(message, db_user)
+
+@router.callback_query(F.data == "show_buy_menu")
+async def show_buy_menu_callback(callback: CallbackQuery, db_user: User):
+    """
+    Shows the credit purchase menu via a callback button.
+    """
+    await show_buy_credits_menu(callback, db_user)
 
 # ============================================================================
 # Отправка инвойса
 # ============================================================================
 
-@router.callback_query(F.data.startswith("buy:"))
+@router.callback_query(F.data.startswith("buy:credits:"))
 async def send_invoice_handler(callback: CallbackQuery):
     """
     Создает и отправляет инвойс на основе callback данных.

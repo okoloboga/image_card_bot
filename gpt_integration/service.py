@@ -50,7 +50,7 @@ class CardGenerationRequest(BaseModel):
 
 class PhotoProcessingRequest(BaseModel):
     telegram_id: int
-    photo_file_id: str
+    photo_file_ids: List[str]
     prompt: str
     user_id: Optional[int] = None
 
@@ -132,7 +132,7 @@ async def photo_process(
     try:
         result = await process_photo(
             telegram_id=req.telegram_id,
-            photo_file_id=req.photo_file_id,
+            photo_file_ids=req.photo_file_ids,
             prompt=req.prompt,
             user_id=req.user_id
         )
