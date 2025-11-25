@@ -183,5 +183,9 @@ if __name__ == "__main__":
     port_str = os.getenv("GPT_PORT") or "9001"
     try:
         port = int(port_str)
+    except ValueError:
+        logger.error(f"Invalid port '{port_str}', using default 9001.")
+        port = 9001
+    
     import uvicorn
     uvicorn.run("gpt_integration.service:app", host="0.0.0.0", port=port)
