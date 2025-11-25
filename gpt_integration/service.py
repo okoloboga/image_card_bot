@@ -179,7 +179,9 @@ async def photo_process(
 # ============================================================================
 
 if __name__ == "__main__":
-    port_str = os.getenv("GPT_PORT") or "9000"
-    port = int(port_str)
+    logger.info("Starting GPT service")
+    port_str = os.getenv("GPT_PORT") or "9001"
+    try:
+        port = int(port_str)
     import uvicorn
     uvicorn.run("gpt_integration.service:app", host="0.0.0.0", port=port)

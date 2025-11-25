@@ -17,5 +17,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY ./gpt_integration /app/gpt_integration
 COPY ./bot/utils /app/utils
 
-ENV GPT_PORT=9000
+ENV GPT_PORT=9001
 CMD ["python", "-m", "gpt_integration.service"]
